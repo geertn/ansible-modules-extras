@@ -44,7 +44,7 @@ options:
     required: false
     choices: ["create","status", "start", "stop", "pause", "unpause",
               "shutdown", "undefine", "destroy", "get_xml", "autostart",
-              "freemem", "list_vms", "info", "nodeinfo", "virttype", "define"]
+              "freemem", "list_vms", "info", "nodeinfo", "virttype", "define", "facts"]
   uri:
     description:
       - libvirt connection uri
@@ -72,6 +72,9 @@ EXAMPLES = '''
 ansible host -m virt -a "name=alpha command=status"
 ansible host -m virt -a "name=alpha command=get_xml"
 ansible host -m virt -a "name=alpha command=create uri=lxc:///"
+
+# Gather facts about virt
+ansible host -m virt -a "name=alpha command=facts"
 
 # a playbook example of defining and launching an LXC guest
 tasks:
@@ -117,7 +120,7 @@ else:
 ALL_COMMANDS = []
 VM_COMMANDS = ['create','status', 'start', 'stop', 'pause', 'unpause',
                 'shutdown', 'undefine', 'destroy', 'get_xml', 'autostart', 'define']
-HOST_COMMANDS = ['freemem', 'list_vms', 'info', 'nodeinfo', 'virttype']
+HOST_COMMANDS = ['freemem', 'list_vms', 'info', 'nodeinfo', 'virttype', 'facts']
 ALL_COMMANDS.extend(VM_COMMANDS)
 ALL_COMMANDS.extend(HOST_COMMANDS)
 
@@ -273,8 +276,13 @@ class Virt(object):
         return state
 
     def info(self):
+        return self.facts(facts_mode='info')
+
+    def facts(self, facts_mode='facts'):
         vms = self.list_vms()
-        info = dict()
+        results = dict()
+        results["list"] = vms
+        results["list_detailed"] = dict()
         for vm in vms:
             data = self.conn.find_vm(vm).info()
             # libvirt returns maxMem, memory, and cpuTime as long()'s, which
@@ -282,16 +290,23 @@ class Virt(object):
             # This throws exceptions, so convert them to strings here and
             # assume the other end of the xmlrpc connection can figure things
             # out or doesn't care.
-            info[vm] = {
+            results["list_detailed"][vm] = {
                 "state"     : VIRT_STATE_NAME_MAP.get(data[0],"unknown"),
                 "maxMem"    : str(data[1]),
                 "memory"    : str(data[2]),
                 "nrVirtCpu" : data[3],
                 "cpuTime"   : str(data[4]),
             }
-            info[vm]["autostart"] = self.conn.get_autostart(vm)
+            results["list_detailed"][vm]["autostart"] = self.conn.get_autostart(vm)
 
-        return info
+        facts = dict()
+        if facts_mode == 'facts':
+            facts["ansible_facts"] = dict()
+            facts["ansible_facts"]["ansible_libvirt_vms"] = results
+        elif facts_mode == 'info':
+            # Keep output backwards compatible
+            facts = results["list_detailed"]
+        return facts
 
     def nodeinfo(self):
         self.__get_conn()
